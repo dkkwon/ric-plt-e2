@@ -1095,6 +1095,7 @@ int receiveDataFromSctp(struct epoll_event *events,
             mdclog_write(MDCLOG_DEBUG, "Start Read from SCTP %d fd", message.peerInfo->fileDescriptor);
             clock_gettime(CLOCK_MONOTONIC, &start);
         }
+        // DK: thread-safe 하려면 read() --> RECEIVE_SCTP_BUFFER_SIZE 크기만큼 반드시 읽어야 함
         // read the buffer directly to rmr payload
         message.message.asndata = rmrMessageBuffer.sendMessage->payload;
         message.message.asnLength = rmrMessageBuffer.sendMessage->len =
@@ -2078,7 +2079,7 @@ int receiveXappMessages(Sctp_Map_t *sctpMap,
 //    if (loglevel >= MDCLOG_DEBUG) {
 //        mdclog_write(MDCLOG_DEBUG, "Call to rmr_rcv_msg");
 //    }
-    // rmr.f
+    // DK: thread-safe 하려면 rmr_rcv_msg() 정확하게 읽고 멀티 쓰레드 동작에 문제 없어야 함
     rmrMessageBuffer.rcvMessage = rmr_rcv_msg(rmrMessageBuffer.rmrCtx, rmrMessageBuffer.rcvMessage);
     if (rmrMessageBuffer.rcvMessage == nullptr) {
         mdclog_write(MDCLOG_ERR, "RMR Receiving message with null pointer, Reallocated rmr message buffer");
