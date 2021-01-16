@@ -396,7 +396,7 @@ int main(const int argc, char **argv) {
 
     num_cpus = 3;
     for (unsigned int i = 0; i < num_cpus; i++) {
-        threads[i] = std::thread(listener, &sctpParams);
+        threads[i] = std::thread(listener, &sctpParams);    // 쓰레드 분리전 모든 공유 데이터는 sctpParams에 넣음
 
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
@@ -589,6 +589,8 @@ void listener(sctp_params_t *params) {
         if (mdclog_level_get() >= MDCLOG_DEBUG) {
             mdclog_write(MDCLOG_DEBUG, "Start EPOLL Wait. Timeout = %d", params->epollTimeOut);
         }
+        // DK: 멀티 쓰레드로 epoll_wait 호출 : epollTimeOut(-1)로 blocking 상태로 동작
+        // DK: epoll_event 에서 epoll_data_t 형태가 (void *)로 데이터를 전달하는 경우는 문제 없음 (SCTP)
         auto numOfEvents = epoll_wait(params->epoll_fd, events, MAXEVENTS, params->epollTimeOut);
         if (numOfEvents == 0) { // time out
             if (mdclog_level_get() >= MDCLOG_DEBUG) {
@@ -622,6 +624,7 @@ void listener(sctp_params_t *params) {
                 if (mdclog_level_get() >= MDCLOG_INFO) {
                     mdclog_write(MDCLOG_INFO, "New connection request from sctp network\n");
                 }
+                // DK: SCTP ListenFD 를 이용하여 SCTP 연결 시 Thread-safe 한지 확인 필요
                 // new connection is requested from RAN  start build connection
                 while (true) {
                     struct sockaddr in_addr {};
@@ -646,6 +649,7 @@ void listener(sctp_params_t *params) {
                             break;
                         }
                     }
+                    // DK: ET 모드 사용 시 SCTP fd 를 Nno-blocking 모드 설정
                     if (setSocketNoBlocking(peerInfo->fileDescriptor) == -1) {
                         mdclog_write(MDCLOG_ERR, "setSocketNoBlocking failed to set new connection %s on port %s\n", hostBuff, portBuff);
                         close(peerInfo->fileDescriptor);
@@ -680,12 +684,15 @@ void listener(sctp_params_t *params) {
                 if (mdclog_level_get() >= MDCLOG_DEBUG) {
                     mdclog_write(MDCLOG_DEBUG, "new RMR message");
                 }
+
+                // DK: RMR Listen FD만 알려주므로, rmr_rcv_msg()에서 thread-safe 보장이 필요
                 if (receiveXappMessages(params->sctpMap,
                                         rmrMessageBuffer,
                                         message.message.time) != 0) {
                     mdclog_write(MDCLOG_ERR, "Error handling Xapp message");
                 }
             } else if (params->inotifyFD == events[i].data.fd) {
+                // DK: inotify FD만 알려주므로, read()에서 thread-safe 보장이 필요
                 mdclog_write(MDCLOG_INFO, "Got event from inotify (configuration update)");
                 handleConfigChange(params);
             } else {
@@ -696,6 +703,8 @@ void listener(sctp_params_t *params) {
                 if (mdclog_level_get() >= MDCLOG_DEBUG) {
                     mdclog_write(MDCLOG_DEBUG, "new message from SCTP, epoll flags are : %0x", events[i].events);
                 }
+                // DK: SCTP 데이터의 경우, 여러 E2Node 연결을 구별할 수 있게 (ConnectedCU_t *)epoll_event.data 등로갛였음
+                // DK: Thead-safe 하려면, read(fd, ...) 을 멀티 쓰레드에서 동작 가능해야 함
                 receiveDataFromSctp(&events[i],
                                     params->sctpMap,
                                     num_of_SCTP_messages,
@@ -2069,6 +2078,7 @@ int receiveXappMessages(Sctp_Map_t *sctpMap,
 //    if (loglevel >= MDCLOG_DEBUG) {
 //        mdclog_write(MDCLOG_DEBUG, "Call to rmr_rcv_msg");
 //    }
+    // rmr.f
     rmrMessageBuffer.rcvMessage = rmr_rcv_msg(rmrMessageBuffer.rmrCtx, rmrMessageBuffer.rcvMessage);
     if (rmrMessageBuffer.rcvMessage == nullptr) {
         mdclog_write(MDCLOG_ERR, "RMR Receiving message with null pointer, Reallocated rmr message buffer");
@@ -2646,5 +2656,3 @@ string translateRmrErrorMessages(int state) {
     }
     return str;
 }
-
-
